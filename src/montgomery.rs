@@ -1,7 +1,7 @@
 // This file implements various montgomery multiplication primitives
 
 use crate::config;
-use crate::types;
+use crate::types::{FheUint, PossiblyFheBool, GroupElementFp, GroupElementFq};
 
 // Montgomery reduction: computes (a * 2^(-32) mod p)
 fn montgomery_reduction_p (a: u64) -> u32 {
@@ -30,7 +30,7 @@ fn montgomery_multiplication_p (a: u32, b: u32) -> u32 {
     montgomery_reduction_p(prod)
 }
 
-pub fn multiply_p (a: types::GroupElementFp, b: types::GroupElementFp) -> types::GroupElementFp {
+pub fn multiply_p (a: GroupElementFp, b: GroupElementFp) -> GroupElementFp {
     let mon_mul = montgomery_multiplication_p(a, b);
     montgomery_reduction_p(mon_mul as u64)
 }
@@ -60,9 +60,87 @@ fn montgomery_multiplication_q (a: u16, b: u16) -> u16 {
     montgomery_reduction_q(prod)
 }
 
-pub fn multiply_q (a: types::GroupElementFq, b: types::GroupElementFq) -> types::GroupElementFq {
+pub fn multiply_q (a: GroupElementFq, b: GroupElementFq) -> GroupElementFq {
     let mon_mul = montgomery_multiplication_q(a, b);
     montgomery_reduction_q(mon_mul as u32)
+}
+
+// mux returns either a mod 2^length or b mod 2^length, depending on c
+// it selects a if c is true, and b if c is false
+fn mux (a: FheUint, b: FheUint, c: PossiblyFheBool, length: usize) -> FheUint {
+    let mut bits = Vec::new();
+    let a_extended = a.extend(length);
+    let b_extended = b.extend(length);
+    for i in 0..length {
+        let a_bit = a_extended.bit_at(i);
+        let b_bit = b_extended.bit_at(i);
+        bits.push(a_bit.and(&c).or(&b_bit.and(&c.not())));
+    }
+    FheUint::from_fhe_bits(bits)
+}
+
+struct MontgomeryReductionObject {
+    psize: usize,
+    p: FheUint,
+    p_inv: FheUint,
+    p_powtwo: FheUint,
+}
+
+// let low_a = a & ((1u64 << 32) - 1);
+// let q = config::P_INV.wrapping_mul(low_a as u32);
+// let prod: u64 = q as u64 * config::P as u64;
+// if a >= prod {
+//     ((a - prod) >> 32) as u32
+// }
+// else {
+//     let diff: u64 = prod - a;
+//     config::P - ((diff >> 32) as u32)
+// }
+
+impl MontgomeryReductionObject {
+    // Constructs a MontgomeryReductionObject
+    // psize is the size of the prime in bits
+    // p is the prime
+    // p_inv is the inverse of p mod 2^psize
+    // p_twopow is 2^(2*psize) mod p
+    pub fn new (psize: usize, p: u128, p_inv: u128, p_twopow: u128) -> Self {
+        MontgomeryReductionObject {
+            psize: psize,
+            p: FheUint::from_u128(p).extend(psize),
+            p_inv: FheUint::from_u128(p_inv).extend(psize),
+            p_powtwo: FheUint::from_u128(p_twopow).extend(2*psize)
+        }
+    }
+
+    // produces (a * 2^(-psize) mod p)
+    // input: 2*psize size FheUint
+    pub fn montgomery_reduction_fhe (&self, a: FheUint) -> FheUint {
+        let low_a = a.section(0, self.psize);
+        let q = self.p_inv.multiply(&low_a, self.psize);
+        let prod = q.multiply(&self.p, 2*self.psize);
+        let ans1 = a.subtract(&prod, 2*self.psize).section(self.psize, 2*self.psize);
+        let diff = prod.subtract(&a, 2*self.psize);
+        let ans2 = self.p.subtract(&diff.section(self.psize, 2*self.psize), self.psize);
+        let gtr = a.geq(&prod, 2*self.psize);
+        mux(ans1, ans2, gtr, self.psize)
+    }
+
+    // produces (a * 2^(2*psize) mod p)
+    pub fn montgomery_initialization_fhe (&self, a: FheUint) -> FheUint {
+        self.montgomery_reduction_fhe(a.multiply(&self.p_powtwo, 2*self.psize))
+    }
+
+    // produces (a * b mod p)
+    pub fn montgomery_multiplication_fhe (&self, a: FheUint, b: FheUint) -> FheUint {
+        let a_init = self.montgomery_initialization_fhe(a);
+        let b_init = self.montgomery_initialization_fhe(b);
+        self.montgomery_reduction_fhe(a_init.multiply(&b_init, 2*self.psize))
+    }
+
+    pub fn multiply_fhe (&self, a: FheUint, b: FheUint) -> FheUint {
+        let mon_mul = self.montgomery_multiplication_fhe(a, b);
+        self.montgomery_reduction_fhe(mon_mul)
+    }
 }
 
 #[cfg(test)]
@@ -101,5 +179,19 @@ mod tests {
         let uv = multiply_q(u, v);
         let uv_naive = (u as u32 * v as u32) % (config::Q as u32);
         assert_eq!(uv as u32, uv_naive);
+    }
+
+    #[test]
+    fn test_montgomery_fhe() {
+        let montgomery = MontgomeryReductionObject::new(32, config::P as u128, config::P_INV as u128, config::P_64 as u128);
+        for _ in 0..100 {
+            let a_arith = rand::random::<u32>() % config::P;
+            let b_arith = rand::random::<u32>() % config::P;
+            let a = FheUint::from_u32(a_arith);
+            let b = FheUint::from_u32(b_arith);
+            let prod = montgomery.multiply_fhe(a, b);
+            let expected_prod = multiply_p(a_arith, b_arith);
+            assert_eq!(prod.as_u128(), expected_prod as u128);
+        }
     }
 }

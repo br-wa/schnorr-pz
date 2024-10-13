@@ -139,6 +139,27 @@ pub struct FheUint {
 }
 
 impl FheUint {
+    pub fn size (&self) -> usize {
+        self.length
+    }
+
+    pub fn bit_at (&self, index: usize) -> &PossiblyFheBool {
+        if index >= self.length {
+            panic!("index out of bounds");
+        }
+        &self.fhe_bits[index]
+    }
+
+    pub fn as_u128 (&self) -> u128 {
+        let mut res: u128 = 0;
+        for i in 0..self.length {
+            assert!(self.fhe_bits[i].is_fhe == false);
+            let bit = self.fhe_bits[i].clone();
+            res = res | (bit.plaintext as u128) << i;
+        }
+        res
+    }
+
     pub fn from_bitstring (bitstring: Vec<bool>) -> Self {
         let mut fhe_bits = Vec::new();
         for bit in &bitstring {
@@ -147,6 +168,14 @@ impl FheUint {
         FheUint {
             fhe_bits: fhe_bits,
             length: bitstring.len()
+        }
+    }
+
+    pub fn from_fhe_bits (fhe_bits: Vec<PossiblyFheBool>) -> Self {
+        let fhe_bits_copy = fhe_bits.clone();
+        FheUint {
+            fhe_bits: fhe_bits_copy,
+            length: fhe_bits.len(),
         }
     }
 
@@ -345,6 +374,19 @@ impl FheUint {
         let other_extended = other.extend(max_length);
         self_extended.karatsuba(&other_extended, max_length).extend(max_length)
     }
+
+    pub fn geq (&self, other: &Self, max_length: usize) -> PossiblyFheBool {
+        let self_extended = self.extend(max_length);
+        let other_extended = other.extend(max_length);
+        let mut ans = PossiblyFheBool::from_plaintext(false);
+        let mut eq: PossiblyFheBool = PossiblyFheBool::from_plaintext(true);
+        for i in (0..max_length).rev() {
+            let gtr = self_extended.fhe_bits[i].and(&other_extended.fhe_bits[i].not()).and(&eq);
+            ans = ans.or(&gtr);
+            eq = eq.and(&self_extended.fhe_bits[i].xor(&other_extended.fhe_bits[i]).not());
+        }
+        ans.or(&eq)
+    }
 }
 
 #[cfg(test)]
@@ -358,45 +400,54 @@ mod tests {
         assert_eq!(msg.to_string(), msg_str);
     }
 
-    // function that converts fheuint to u128, only works if all bits are plaintext
-    fn fheuint_to_u128 (fhe_uint: &FheUint) -> u128 {
-        let mut res: u128 = 0;
-        for i in 0..std::cmp::min(fhe_uint.length, 128) {
-            assert!(fhe_uint.fhe_bits[i].is_fhe == false);
-            res = res | (fhe_uint.fhe_bits[i].plaintext as u128) << i;
-        }
-        res
+    // function that converts fhebool to bool, only works if it is plaintext
+    fn fhebool_to_bool (fhe_bool: &PossiblyFheBool) -> bool {
+        assert!(fhe_bool.is_fhe == false);
+        fhe_bool.plaintext
     }
 
     #[test]
     fn test_arithmetic () {
-        let a_arith: u32 = rand::random::<u32>();
-        let b_arith: u32 = rand::random::<u32>();
-        let c_arith = a_arith.wrapping_add(b_arith);
-        let a = FheUint::from_u32(a_arith);
-        let b = FheUint::from_u32(b_arith);
-        assert_eq!(fheuint_to_u128(&a.sum(&b, 32)), c_arith as u128);
-        assert_eq!(fheuint_to_u128(&a.sum(&b, 32).extend(92)), c_arith as u128);
+        for _ in 0..100 {            
+            let a_arith: u32 = rand::random::<u32>();
+            let b_arith: u32 = rand::random::<u32>();
+            let c_arith = a_arith.wrapping_add(b_arith);
+            let a = FheUint::from_u32(a_arith);
+            let b = FheUint::from_u32(b_arith);
+            assert_eq!(a.sum(&b, 32).as_u128(), c_arith as u128);
+            assert_eq!(a.sum(&b, 32).extend(92).as_u128(), c_arith as u128);
 
-        let d_arith = a_arith.wrapping_sub(b_arith);
-        assert_eq!(fheuint_to_u128(&a.subtract(&b, 32)), d_arith as u128);
+            let d_arith = a_arith.wrapping_sub(b_arith);
+            assert_eq!(a.subtract(&b, 32).as_u128(), d_arith as u128);
 
-        // This step tests dummy multiplication
-        let e = FheUint::from_bitstring(vec![true, false, true]); // 5
-        let f: FheUint = FheUint::from_bitstring(vec![true, true, false]); // 3
-        assert_eq!(fheuint_to_u128(&e.dummy_multiply(&f, 3)), 15);
-        assert_eq!(fheuint_to_u128(&e.multiply(&f, 3)), 7); // 15 mod 2^3
-        assert_eq!(fheuint_to_u128(&e.multiply(&f, 4)), 15);
+            // This step tests dummy multiplication
+            let e = FheUint::from_bitstring(vec![true, false, true]); // 5
+            let f: FheUint = FheUint::from_bitstring(vec![true, true, false]); // 3
+            assert_eq!(e.dummy_multiply(&f, 3).as_u128(), 15);
+            assert_eq!(e.multiply(&f, 3).as_u128(), 7); // 15 mod 2^3
+            assert_eq!(e.multiply(&f, 4).as_u128(), 15);
 
-        // This step tests karatsuba multiplication
-        for i in 4..32 {
-            let e_temp = e.extend(i);
-            let f_temp = f.extend(i);
-            assert_eq!(e_temp.karatsuba(&f_temp, i).length, 2*i);
-            assert_eq!(fheuint_to_u128(&e_temp.karatsuba(&f_temp, i)), 15);
+            // This step tests karatsuba multiplication
+            for i in 4..32 {
+                let e_temp = e.extend(i);
+                let f_temp = f.extend(i);
+                assert_eq!(e_temp.karatsuba(&f_temp, i).length, 2*i);
+                assert_eq!(e_temp.karatsuba(&f_temp, i).as_u128(), 15);
+            }
+
+            let g_arith = a_arith.wrapping_mul(b_arith);
+            assert_eq!(a.multiply(&b, 32).as_u128(), g_arith as u128);
         }
+    }
 
-        let g_arith = a_arith.wrapping_mul(b_arith);
-        assert_eq!(fheuint_to_u128(&a.multiply(&b, 32)), g_arith as u128);
+    #[test]
+    fn test_comparison() {
+        for _ in 0..100 {
+            let a_arith: u32 = rand::random::<u32>();
+            let b_arith: u32 = rand::random::<u32>();
+            let a = FheUint::from_u32(a_arith);
+            let b = FheUint::from_u32(b_arith);
+            assert_eq!(fhebool_to_bool(&a.geq(&b, 32)), a_arith >= b_arith);
+        }
     }
 }

@@ -57,11 +57,11 @@ pub fn sign(sk: types::GroupElementFq, msg: types::Message) -> (types::GroupElem
     let r = exp(config::G, k);
     let e =  hash_two(r, msg);
     let xe = montgomery::multiply_q(e, sk);
-    let mut s = k + xe;
-    if s >= config::Q {
-        s = s - config::Q;
+    let mut s = (k as u32) + (xe as u32);
+    if s >= (config::Q as u32) {
+        s -= config::Q as u32;
     }
-    (e, s)
+    (e, s as u16)
 }
 
 pub fn verify (pk: types::GroupElementFp, msg: types::Message, (e, s): (types::GroupElementFq, types::GroupElementFq)) -> bool {
