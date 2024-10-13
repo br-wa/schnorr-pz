@@ -121,6 +121,11 @@ impl PossiblyFheBool {
             other.clone()
         }
     }
+
+    pub fn to_bool (&self) -> bool {
+        assert!(self.is_fhe == false);
+        self.plaintext
+    }
 }
 
 fn to_bits (a: u128, len: usize) -> Vec<bool> {
@@ -387,6 +392,16 @@ impl FheUint {
         }
         ans.or(&eq)
     }
+
+    pub fn eq (&self, other: &Self, max_length: usize) -> PossiblyFheBool {
+        let self_extended = self.extend(max_length);
+        let other_extended = other.extend(max_length);
+        let mut ans = PossiblyFheBool::from_plaintext(true);
+        for i in 0..max_length {
+            ans = ans.and(&self_extended.fhe_bits[i].xor(&other_extended.fhe_bits[i]).not());
+        }
+        ans
+    }
 }
 
 #[cfg(test)]
@@ -448,6 +463,18 @@ mod tests {
             let a = FheUint::from_u32(a_arith);
             let b = FheUint::from_u32(b_arith);
             assert_eq!(fhebool_to_bool(&a.geq(&b, 32)), a_arith >= b_arith);
+        }
+    }
+
+    #[test]
+    fn test_equality() {
+        for _ in 0..100 {
+            let a_arith: u32 = rand::random::<u32>();
+            let eq: bool = rand::random::<bool>();
+            let b_arith: u32 = if eq {a_arith} else {rand::random::<u32>()};
+            let a = FheUint::from_u32(a_arith);
+            let b = FheUint::from_u32(b_arith);
+            assert_eq!(fhebool_to_bool(&a.eq(&b, 32)), a_arith == b_arith);
         }
     }
 }

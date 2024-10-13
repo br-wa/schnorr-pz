@@ -67,7 +67,7 @@ pub fn multiply_q (a: GroupElementFq, b: GroupElementFq) -> GroupElementFq {
 
 // mux returns either a mod 2^length or b mod 2^length, depending on c
 // it selects a if c is true, and b if c is false
-fn mux (a: FheUint, b: FheUint, c: PossiblyFheBool, length: usize) -> FheUint {
+pub fn mux (a: FheUint, b: FheUint, c: PossiblyFheBool, length: usize) -> FheUint {
     let mut bits = Vec::new();
     let a_extended = a.extend(length);
     let b_extended = b.extend(length);
@@ -79,23 +79,12 @@ fn mux (a: FheUint, b: FheUint, c: PossiblyFheBool, length: usize) -> FheUint {
     FheUint::from_fhe_bits(bits)
 }
 
-struct MontgomeryReductionObject {
-    psize: usize,
-    p: FheUint,
+pub struct MontgomeryReductionObject {
+    pub psize: usize,
+    pub p: FheUint,
     p_inv: FheUint,
     p_powtwo: FheUint,
 }
-
-// let low_a = a & ((1u64 << 32) - 1);
-// let q = config::P_INV.wrapping_mul(low_a as u32);
-// let prod: u64 = q as u64 * config::P as u64;
-// if a >= prod {
-//     ((a - prod) >> 32) as u32
-// }
-// else {
-//     let diff: u64 = prod - a;
-//     config::P - ((diff >> 32) as u32)
-// }
 
 impl MontgomeryReductionObject {
     // Constructs a MontgomeryReductionObject
@@ -140,6 +129,12 @@ impl MontgomeryReductionObject {
     pub fn multiply_fhe (&self, a: FheUint, b: FheUint) -> FheUint {
         let mon_mul = self.montgomery_multiplication_fhe(a, b);
         self.montgomery_reduction_fhe(mon_mul)
+    }
+
+    // subtracts p from a if a >= p, for a < 2p
+    pub fn mod_once (&self, a: FheUint) -> FheUint {
+        let gtr = a.clone().geq(&self.p, self.psize + 1);
+        mux(a.clone().subtract(&self.p, self.psize + 1), a.clone(), gtr, self.psize + 1).extend(self.psize)
     }
 }
 
@@ -192,6 +187,19 @@ mod tests {
             let prod = montgomery.multiply_fhe(a, b);
             let expected_prod = multiply_p(a_arith, b_arith);
             assert_eq!(prod.as_u128(), expected_prod as u128);
+        }
+    }
+
+    #[test]
+    fn test_mux () {
+        for _ in 0..100 {
+            let a_arith: u32 = rand::random::<u32>();
+            let b_arith: u32 = rand::random::<u32>();
+            let c_bool: bool = rand::random::<bool>();
+            let a = FheUint::from_u32(a_arith);
+            let b = FheUint::from_u32(b_arith);
+            let c = PossiblyFheBool::from_plaintext(c_bool);
+            assert_eq!(mux(a, b, c, 32).as_u128(), if c_bool {a_arith as u128} else {b_arith as u128});
         }
     }
 }

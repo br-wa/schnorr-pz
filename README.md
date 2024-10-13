@@ -7,4 +7,4 @@ Additionally, they are composed of `PossiblyFheBools`, which can be either plain
 
 Outstanding TODOs:
 - The hash function used is very primitive (and is clearly unsafe). It is currently used as a proof-of-concept.
-- The implementation of FheUints can be improved. There is a lot of memory cloning, which ends up being very expensive.
+- The implementation of FheUints can be improved. There is a lot of memory cloning, which ends up being very expensive. We should replace this with passing by reference when possible.
