@@ -6,4 +6,4 @@ edition = "2021"
 [dependencies]
 rand = "0.8.5"
 log = "0.4.17"
-phantom-zone = { git = "https://github.com/gausslabs/phantom-zone"}
+phantom-zone = { git = "https://github.com/br-wa/phantom-zone", features = ["non_interactive_mp"]}

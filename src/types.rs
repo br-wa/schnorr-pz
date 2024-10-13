@@ -1,3 +1,5 @@
+use phantom_zone::FheBool;
+
 pub type GroupElementFp = u32;
 pub type GroupElementFq = u16;
 
@@ -35,6 +37,94 @@ impl Message {
         self.0.to_vec()
     }
 }
+
+// PossiblyFheBool is a value that can either be an FheBool or a plaintext bool
+#[derive(Clone)]
+pub struct PossiblyFheBool {
+    fhe_bool: Option<FheBool>,
+    plaintext: bool,
+    is_fhe: bool
+}
+
+impl PossiblyFheBool {
+    pub fn from_fhe_bool(fhe_bool: FheBool) -> Self {
+        PossiblyFheBool {
+            fhe_bool: Some(fhe_bool),
+            plaintext: false,
+            is_fhe: true
+        }
+    }
+
+    pub fn from_plaintext(plaintext: bool) -> Self {
+        PossiblyFheBool {
+            fhe_bool: None,
+            plaintext: plaintext,
+            is_fhe: false
+        }
+    }
+
+    pub fn is_fhe(&self) -> bool {
+        self.is_fhe
+    }
+
+    pub fn and(&self, other: &Self) -> Self {
+        if self.is_fhe && other.is_fhe {
+            PossiblyFheBool::from_fhe_bool(self.fhe_bool.as_ref().unwrap() & other.fhe_bool.as_ref().unwrap())
+        }
+        else if self.is_fhe {
+            return other.and(self)
+        }
+        else if self.plaintext {
+            return other.clone()
+        } else {
+            PossiblyFheBool::from_plaintext(false)
+        }
+    }
+
+    pub fn or(&self, other: &Self) -> Self {
+        if self.is_fhe && other.is_fhe {
+            PossiblyFheBool::from_fhe_bool(self.fhe_bool.as_ref().unwrap() | other.fhe_bool.as_ref().unwrap())
+        }
+        else if self.is_fhe {
+            return other.or(self)
+        }
+        else if self.plaintext {
+            PossiblyFheBool::from_plaintext(true)
+        } else {
+            other.clone()
+        }
+    }
+
+    pub fn not(&self) -> Self {
+        if self.is_fhe {
+            PossiblyFheBool::from_fhe_bool(!self.fhe_bool.as_ref().unwrap())
+        }
+        else {
+            PossiblyFheBool::from_plaintext(!self.plaintext)
+        }
+    }
+
+    pub fn xor(&self, other: &Self) -> Self {
+        if self.is_fhe && other.is_fhe {
+            PossiblyFheBool::from_fhe_bool(self.fhe_bool.as_ref().unwrap() ^ other.fhe_bool.as_ref().unwrap())
+        }
+        else if self.is_fhe {
+            return other.xor(self)
+        }
+        else if self.plaintext {
+            return other.not()
+        } else {
+            other.clone()
+        }
+    }
+}
+
+// Why do we implement things as PossiblyFheBools?
+// We get performance optimizations dealing with regular bools, so we use them when possible.
+pub struct FheUint16([PossiblyFheBool; 16]);
+pub struct FheUint32([PossiblyFheBool; 32]);
+pub struct FheUint64([PossiblyFheBool; 64]);
+
 
 #[cfg(test)]
 mod tests {
