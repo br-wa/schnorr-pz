@@ -98,11 +98,16 @@ impl<H: SchnorrFheWithHash> FheSchnorr<H> {
         (e, s)
     }
 
-    pub fn verify (&self, pk: FheUint, msg: Vec<PossiblyFheBool>, (e, s): (FheUint, FheUint)) -> PossiblyFheBool {
+    fn verify_intermediates (&self, pk: FheUint, msg: Vec<PossiblyFheBool>, (e, s): (FheUint, FheUint)) -> (FheUint, FheUint) {
         let r1 = self.exp_p(self.g.clone(), s.clone());
         let r2 = self.exp_p(pk, e.clone());
         let r = self.montgomery_p.multiply_fhe(r1, r2);
-        let e_out = self.hash_two(r, msg);
+        let e_out = self.hash_two(r.clone(), msg);
+        (r, e_out)
+    }
+
+    pub fn verify (&self, pk: FheUint, msg: Vec<PossiblyFheBool>, (e, s): (FheUint, FheUint)) -> PossiblyFheBool {
+        let (_, e_out) = self.verify_intermediates(pk, msg, (e.clone(), s));
         e_out.eq(&e, self.montgomery_q.psize)
     }
 }
@@ -112,6 +117,7 @@ mod tests {
     use super::*;
     use crate::types;
     use crate::schnorr;
+    use crate::montgomery;
 
     #[test]
     fn test_dummy_hash () {
@@ -157,6 +163,41 @@ mod tests {
         assert_eq!(s.as_u128(), s_expected as u128);
     }
 
+    fn schnorr_intermediates (pk: types::GroupElementFp, msg: types::Message, (e, s): (types::GroupElementFq, types::GroupElementFq)) -> (types::GroupElementFp, types::GroupElementFq) {
+        let r1 = schnorr::exp(config::G, s);
+        let r2 = schnorr::exp(pk, e);
+        let r = montgomery::multiply_p(r1, r2);
+        let e_out = schnorr::hash_two(r, msg);
+        (r, e_out)
+    }
+
+    #[test]
+    fn test_verify_intermediates () {
+        for _ in 0..10 {
+            let hasher = DummyHasher::new(16);
+            let schnorr = FheSchnorr::new(hasher);
+
+            let sk_plaintext = rand::random::<u16>() % config::Q;
+            let pk_plaintext = schnorr::init(sk_plaintext);
+            let msg_plaintext = types::Message::from_string("1234567890a~!@#ABCDEF.;/qwertyui".to_string());
+
+            let (e_plaintext, s_plaintext) = schnorr::sign(sk_plaintext, rand::random::<u16>() % config::Q, msg_plaintext);
+            let (r_plaintext, e_out_plaintext) = schnorr_intermediates(pk_plaintext, msg_plaintext, (e_plaintext, s_plaintext));
+            let (r, e_out) = schnorr.verify_intermediates(
+                FheUint::from_u32(pk_plaintext), 
+                msg_plaintext.get_bitstring().iter().map(|x| PossiblyFheBool::from_plaintext(*x)).collect::<Vec<PossiblyFheBool>>(), 
+                (FheUint::from_u16(e_plaintext), FheUint::from_u16(s_plaintext))
+            );
+            assert_eq!(r.as_u128(), r_plaintext as u128);
+            assert_eq!(e_out.as_u128(), e_out_plaintext as u128);
+            assert_eq!(e_out_plaintext, e_plaintext);
+            assert_eq!(e_out.as_u128(), e_plaintext as u128);
+            assert!(
+                e_out.eq(&FheUint::from_u16(e_plaintext), 16).to_bool()
+            )
+        }
+    }
+
     #[test]
     fn test_schnorr_fhe() {
         let hasher = DummyHasher::new(16);
@@ -164,8 +205,11 @@ mod tests {
 
         let sk = FheUint::from_u16(rand::random::<u16>() % config::Q);
         let pk = schnorr.get_pub_key(sk.clone());
-        let msg = vec![PossiblyFheBool::from_plaintext(true); 256];
-        let (e, s) = schnorr.sign(sk, FheUint::from_u32(rand::random::<u32>()), msg.clone());
+        let message_plaintext = types::Message::from_string("1234567890a~!@#ABCDEF.;/qwertyui".to_string());
+        let msg = message_plaintext.get_bitstring().iter().map(|x| PossiblyFheBool::from_plaintext(*x)).collect::<Vec<PossiblyFheBool>>();
+        let nonce_plaintext = rand::random::<u16>() % config::Q;
+        let nonce = FheUint::from_u16(nonce_plaintext);
+        let (e, s) = schnorr.sign(sk, nonce, msg.clone());
         assert!(schnorr.verify(pk, msg, (e, s)).to_bool());
     }
 }

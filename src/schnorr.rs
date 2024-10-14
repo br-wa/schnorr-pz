@@ -22,7 +22,7 @@ pub fn hash(bitstring: Vec<bool>) -> types::GroupElementFq {
     }
 }
 
-fn exp(mut base: types::GroupElementFp, mut pow: types::GroupElementFq) -> types::GroupElementFp {
+pub fn exp(mut base: types::GroupElementFp, mut pow: types::GroupElementFq) -> types::GroupElementFp {
     let mut g_pow = 1;
     while pow > 0 {
         if pow & 1 == 1 {
